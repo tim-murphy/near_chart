@@ -38,6 +38,7 @@ N_TO_LOGRAD = {
     14: 0.7,
     12: 0.6,
     10: 0.5,
+    9: log10(1.15/0.4), # Estimate for Howell
     8: 0.4,
     7: log10(0.9/0.4), # Estimate for Howell
     6: 0.3,
