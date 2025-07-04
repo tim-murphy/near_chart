@@ -124,7 +124,7 @@ if __name__ == '__main__':
             rows = csv.DictReader(ifile)
             for row in rows:
                 # Ignore empty lines.
-                if row["Chart"] == "":
+                if row["Height (px)"] == "":
                     continue
 
                 # If the comment starts with EXCLUDE, ignore the line.
