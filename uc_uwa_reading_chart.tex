@@ -1,0 +1,80 @@
+\documentclass[12pt,a4paper]{article}
+
+% Hack: xpatch is included by newtxtext for no reason. This tricks the compiler into thinking a
+% very new version is already loaded.
+\ExpandArgs{c}\def{ver@xpatch.sty}{3000/12/12}
+
+\usepackage{helvet} % URW Nimbus Sans (Helvetica alternative), XPM: 2048, x-height: 1073
+\usepackage{ifthen}
+\usepackage{newtxtext} % URW Nimbus Roman (Times New Roman alternative), XPM: 2048, x-height: 921
+\usepackage{numprint}
+\usepackage{scrlayer}
+\usepackage{xfp}
+
+% FIXME temporary
+\usepackage{pgffor}
+
+\newcommand{\sansxheightfrac}{\fpeval{1073 / 2048}}
+\newcommand{\serifxheightfrac}{\fpeval{921 / 2048}}
+\newcommand{\xheightfrac}{\serifxheightfrac}
+
+% Line spacing - must not be larger than 1.5, typically 1.2-1.45.
+\newcommand{\linespacing}{1.25}
+
+% Ruler.
+\DeclareNewLayer[
+    foreground,
+    leftmargin,
+    hoffset=1cm,
+    voffset=1cm,
+    width=19cm,
+    height=26cm,
+    contents=\layercontentsmeasure
+]{measurelayer}
+\DeclareNewPageStyleByLayers{measurestyle}{measurelayer}
+
+% Display logRAD (and other) values to two decimal places.
+\npdecimalsign{.}
+\nprounddigits{2}
+
+% This function calculates the point size required for a given logRAD value.
+% Usage: \logradtopt{lograd}
+\newcommand{\mmtopt}{2.83464353}
+\newcommand{\radxheight}{400 * tand(5 / 60)}
+\newcommand{\logradtopt}[1]{\fpeval{(10**#1 * \radxheight * \mmtopt) / \xheightfrac}}
+
+% This function changes the font size for a given logRAD value.
+%Usage: \fontsizelograd{lograd}
+\newcommand{\fontsizelograd}[1]{\fontsize{\logradtopt{#1}}{\fpeval{\logradtopt{#1} * \linespacing}}\selectfont}
+
+% Generates the vision chart, with serif or sans serif font.
+% Usage: \generatechart{use_serif} (true/false)
+\newcommand{\generatechart}[1]{%
+    \ifthenelse{\boolean{#1}}{%
+        \rmfamily%
+        \renewcommand{\xheightfrac}{\serifxheightfrac}%
+        \fontsizelograd{1.0}{Serif: Nimbus Roman}\newline%
+    }{%
+        \sffamily%
+        \renewcommand{\xheightfrac}{\sansxheightfrac}%
+        \fontsizelograd{1.0}{Sans Serif: Nimbus Sans}\newline%
+    }%
+    \vspace{1.0em}
+
+    \foreach \lograd in {-0.3, -0.2, -0.1}{%
+        \fontsizelograd{\lograd}%
+        xxx \textminus\numprint{\fpeval{\lograd * (-1)}} xxx\\%
+    }%
+    \foreach \lograd in {0.0, 0.1, ...,1.4}{%
+        \fontsizelograd{\lograd}%
+        xxx \numprint{\lograd} xxx\\%
+    }%
+}
+
+\begin{document}
+\pagestyle{measurestyle}
+\centering
+\generatechart{true}
+\newpage
+\generatechart{false}
+\end{document}
