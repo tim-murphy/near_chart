@@ -10,6 +10,8 @@ from math import atan, ceil, degrees, log10
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import pingouin as pg
+import pandas as pd
 from scipy.stats import linregress
 from statistics import mean, median
 import sys
@@ -185,6 +187,9 @@ if __name__ == '__main__':
                         help="Exclude the newly created charts")
     parser.add_argument("--chart_title", type=str, default="X-height Measurements",
                         help="Title for the x-height measurement plot")
+    parser.add_argument("--max_height_diff", default=0.2, type=float,
+                        help="The maximum allowable difference in measurements,"\
+                             + " as a fraction. (default: 0.2)")
     args = parser.parse_args()
 
     # Check command-line arguments.
@@ -203,6 +208,11 @@ if __name__ == '__main__':
     #                            [labels] -> [unit + size]
     height_px = {}
 
+    # These data will be used to calculate ICC3
+    # Format: file -> {chart -> {size -> [x-height]}}
+    icc_data = {}
+    all_charts = set()
+
     # Extract the data.
     for csvfile in glob.glob(os.path.join(csv_dir, "*.csv")):
         print("Processing ", os.path.split(csvfile)[1], "...", end="",
@@ -211,6 +221,9 @@ if __name__ == '__main__':
         with open(csvfile, 'r') as ifile:
             next(ifile)
             rows = csv.DictReader(ifile)
+
+            if not csvfile in icc_data:
+                icc_data[csvfile] = {}
 
             for row in rows:
                 # Ignore empty lines.
@@ -222,7 +235,7 @@ if __name__ == '__main__':
                     continue
 
                 # Threshold charts only.
-                if "Chart type" in row and row["Chart type"] != "Threshold":
+                if "Chart type" in row and row["Chart type"] not in ("Threshold", ""):
                     continue
 
                 # Valid letters only.
@@ -233,11 +246,17 @@ if __name__ == '__main__':
 
                 # For code readability.
                 chart = row["Chart"]
+                chart_id = float(chart.split(" :: ")[0])
                 unit = row["Unit"]
                 size = float(row["Size"])
                 measure_type = X_HEIGHT if row["Letter"].islower() \
                                         else CAP_HEIGHT
                 measure = int(row["Height (px)"])
+
+                if not chart_id in icc_data[csvfile]:
+                    icc_data[csvfile][chart_id] = {}
+
+                all_charts.add(chart_id)
 
                 # Keep track of the lowest Y coord regardless of measure_type.
                 # From this we can estimate the line spacing.
@@ -264,6 +283,10 @@ if __name__ == '__main__':
 
                 lograd = round(lograd, 1)
 
+                if not lograd in icc_data[csvfile][chart_id]:
+                    icc_data[csvfile][chart_id][lograd] = []
+                icc_data[csvfile][chart_id][lograd].append(measure)
+
                 if not chart in height_px:
                     height_px[chart] = {}
 
@@ -285,6 +308,74 @@ if __name__ == '__main__':
                     height_px[chart][lograd][UNIT_LABELS].append(label)
 
             print("done")
+
+    # Calculate Krippendorff's Alpha for all measurements.
+    # For this we need a matrix with graders as rows and measurements as cols.
+    icc_data_matrix = {}
+
+    for g in icc_data.keys():
+        icc_data_matrix[g] = []
+
+    icc_data_good = True
+    for chart_id in all_charts:
+        if chart_id in NEW_CHARTS:
+            continue
+
+        # Sanity check.
+        grader_one = None
+        for g in icc_data.keys():
+            if grader_one is None:
+                grader_one = g
+                continue
+
+            if sorted(icc_data[grader_one][chart_id].keys()) !=\
+               sorted(icc_data[g][chart_id].keys()):
+                print("ERROR:", g, "has measured different sizes to",
+                      grader_one, "for chart", chart_id)
+                print(grader_one, "=",
+                      sorted(icc_data[grader_one][chart_id].keys()))
+                print(g, "=", sorted(icc_data[g][chart_id].keys()))
+                icc_data_good = False
+
+        all_sizes = sorted(icc_data[grader_one][chart_id].keys())
+
+        for g in sorted(icc_data.keys()):
+            for s in all_sizes:
+                icc_data_matrix[g].append(mean(icc_data[g][chart_id][s]))
+
+    if not icc_data_good:
+        sys.exit()
+
+    # Convert to a Pandas data frame so we can do the ICC calculations.
+    icc_df = pd.DataFrame(icc_data_matrix)
+
+    # ...and convert to long format.
+    icc_df['index'] = icc_df.index
+    icc_df = pd.melt(icc_df, id_vars=['index'], value_vars=list(icc_df)[:-1])
+
+    icc = pg.intraclass_corr(icc_df, 'index', 'variable', 'value')
+    icc = icc.set_index("Type")
+    print()
+    print("=== ICC2 ===")
+    print(icc.loc["ICC2"])
+    print()
+
+    # Find instances where there is disagreement by more than 2px.
+    bad_data = False
+    for chart, data0 in height_px.items():
+            for lr, data1 in data0.items():
+                for height in (X_HEIGHT, CAP_HEIGHT):
+                    if height not in data1:
+                        continue
+
+                    if max(data1[height]) - min(data1[height]) > \
+                    mean(data1[height]) * args.max_height_diff:
+                        bad_data = True
+                        print("ERROR: diff of more than", args.max_height_diff,
+                              "for", chart, lr, height, ":", data1[height])
+
+    if bad_data:
+        sys.exit(1)
 
     # Extract the cap height / x-height ratio from the largest available font
     # size. Also deduce the line spacing.
@@ -353,7 +444,7 @@ if __name__ == '__main__':
                 # This doesn't work if there aren't enough datapoints.
                 line_spacing = None
                 if len(set(first_line_chars[0])) <= 3 or\
-                   len(set(second_line_chars[0])) <= 3:
+                   len(set(second_line_chars[0])) <= 3 or True: # FIXME
                     line_spacing = (mean(second_line_chars[1])\
                         - mean(first_line_chars[1])) / full_height
                 else:
@@ -376,7 +467,10 @@ if __name__ == '__main__':
 
                 line_spacings.append(line_spacing)
 
-        print("Line spacing for chart", chart_id, "=", median(line_spacings))
+        print("Line spacing for chart", chart_id,
+              "min=", round(min(line_spacings), 2),
+              "max=", round(max(line_spacings), 2),
+              "median=", round(median(line_spacings), 2))
 
     # These data will be used for the scatterplot.
     scatter_data = {SCATTER_LABEL: [],
@@ -416,10 +510,11 @@ if __name__ == '__main__':
                 mean_px = mean(heights)
                 mean_mm = px_to_mm(mean_px)
                 means[measure_type] = mean_mm
-                print("  ", measure_type, " mean: ", round(mean_mm, 3), "mm",
-                      " (", round(mean_mm - MEASUREMENT_ERROR, 3), "-",
-                      round(mean_mm + MEASUREMENT_ERROR, 3), ")",
-                      sep="")
+                if measure_type not in (BOTTOM_X_VALUE, BOTTOM_Y_VALUE):
+                    print("  ", measure_type, " mean: ", round(mean_mm, 3),
+                        "mm (", round(mean_mm - MEASUREMENT_ERROR, 3), "-",
+                        round(mean_mm + MEASUREMENT_ERROR, 3), ")",
+                        sep="")
 
                 if measure_type == X_HEIGHT:
                     expected_mm = lograd_to_mm(lograd)
@@ -462,6 +557,7 @@ if __name__ == '__main__':
                       scatter_data[SCATTER_Y][i],
                       sep=",", file=ofile)
 
+    # Generate the plot
     plt.rcParams.update({'font.size': 14})
     markers = ("o", "x", "s")
     assert(ceil(len(set(scatter_data[SCATTER_LABEL])) / 10) <= len(markers))
