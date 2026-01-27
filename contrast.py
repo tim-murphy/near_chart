@@ -11,6 +11,11 @@ import os
 def calc_contrast(background: int, foreground: int):
     return (background - foreground) / background
 
+# Gamma correction using the standard formula: y = x^2.2
+# Note: need to convert to a decimal first, and will return a normalised value.
+def gamma_correction(x):
+    return pow(x/255.0, 2.2)
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--chart_img", nargs="+", type=str, required=True,
@@ -40,7 +45,11 @@ if __name__ == '__main__':
 
         dark_val, light_val, dark_loc, light_loc = cv2.minMaxLoc(img)
 
-        print(chart, int(dark_val), int(light_val), *dark_loc, *light_loc,
+        # Apply gamma correction.
+        dark_val = gamma_correction(dark_val)
+        light_val = gamma_correction(light_val)
+
+        print(chart, dark_val, light_val, *dark_loc, *light_loc,
               calc_contrast(light_val, dark_val), sep=",")
 
 # EOF
