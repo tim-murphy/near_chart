@@ -562,6 +562,9 @@ if __name__ == '__main__':
     markers = ("o", "x", "s")
     assert(ceil(len(set(scatter_data[SCATTER_LABEL])) / 10) <= len(markers))
 
+    # Calculate the largest difference for each size.
+    lograd_diff = {}
+
     for label_num, label in enumerate(sorted(set(scatter_data[SCATTER_LABEL]))):
         plot_data = [[], [], []]
 
@@ -571,11 +574,22 @@ if __name__ == '__main__':
                 plot_data[1].append(scatter_data[SCATTER_Y][i])
                 plot_data[2].append(scatter_data[ERROR][i])
 
+                if not scatter_data[SCATTER_X][i] in lograd_diff:
+                    lograd_diff[scatter_data[SCATTER_X][i]] = []
+
+                lograd_diff[scatter_data[SCATTER_X][i]].append(
+                    scatter_data[SCATTER_Y][i])
 
         marker = markers[int(label_num / 10)]
         plt.errorbar(plot_data[0], plot_data[1], yerr=plot_data[2],
                     fmt=marker, label="Chart " + label.split(" :: ")[0],
                     markersize=15)
+
+    for lograd, data in lograd_diff.items():
+        print(lograd,
+              "min:", min(data),
+              "max:", max(data),
+              "diff:", max(data) - min(data))
 
     plt.xlim(min(scatter_data[SCATTER_X]) - 0.1, max(scatter_data[SCATTER_X]) + 0.1)
     plt.xticks(np.arange(plt.axis()[0], plt.axis()[1], 0.1))
