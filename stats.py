@@ -12,7 +12,7 @@ import numpy as np
 import os
 import pingouin as pg
 import pandas as pd
-from scipy.stats import linregress
+from scipy.stats import iqr, linregress
 from statistics import mean, median
 import sys
 
@@ -71,6 +71,7 @@ SERIF_CHART = {
 }
 
 N_TO_LOGRAD = {
+    96: 1.5, # Not in standard, estimated from 1.2 (N48).
     60: 1.3,
     48: 1.2,
     36: 1.1,
@@ -80,9 +81,7 @@ N_TO_LOGRAD = {
     14: 0.7,
     12: 0.6,
     10: 0.5,
-    # 9: log10(1.15/0.4), # Estimate for Howell
     8: 0.4,
-    # 7: log10(0.9/0.4), # Estimate for Howell
     6: 0.3,
     5: 0.2,
     4: 0.1,
@@ -92,11 +91,25 @@ N_TO_LOGRAD = {
     1.5: -0.3
 }
 
+# Precondition: we assume this is a valid 0.1 logRAD step.
+# This function only converts those in the N_TO_LOGRAD dictionary.
+def lograd_to_n(lograd):
+    for (n, lr) in N_TO_LOGRAD.items():
+        if round(lograd,1) == round(lr, 1):
+            return n
+
+    # If we get here, the value wasn't found in the table.
+    raise ValueError("Could not convert logRAD " + str(lograd) +\
+                     " to n: value is not in the dictionary.")
+
 def px_to_mm(px, dpi=600):
     return 25.4/600*px
 
 def lograd_to_mm(lograd, distance_mm=400):
     return 0.582 * pow(10, lograd)
+
+def n_to_mm(n):
+    return 127 * n / 360
 
 def mm_to_lograd(mm, distance_mm=400, round_to=0.1):
     rad = 60 * degrees(atan(mm / (5 * distance_mm)))
@@ -190,6 +203,8 @@ if __name__ == '__main__':
     parser.add_argument("--max_height_diff", default=0.2, type=float,
                         help="The maximum allowable difference in measurements,"\
                              + " as a fraction. (default: 0.2)")
+    parser.add_argument("--compare_to_n", action="store_true", required=False,
+                        help="If set, will compare measurements to N sizes.")
     args = parser.parse_args()
 
     # Check command-line arguments.
@@ -410,7 +425,7 @@ if __name__ == '__main__':
 
         # This is the x-height to full height ratio for Helvetica and Times
         # New Roman. Using these as surrogates for [sans]-serif fonts.
-        x_height_ratio = (0.523 if SERIF_CHART[chart_id] else 0.450)
+        x_height_ratio = (0.450 if SERIF_CHART[chart_id] else 0.523)
 
         # Line spacing.
         line_spacings = []
@@ -470,7 +485,8 @@ if __name__ == '__main__':
         print("Line spacing for chart", chart_id,
               "min=", round(min(line_spacings), 2),
               "max=", round(max(line_spacings), 2),
-              "median=", round(median(line_spacings), 2))
+              "median=", round(median(line_spacings), 2),
+              "iqr=", round(iqr(line_spacings), 2))
 
     # These data will be used for the scatterplot.
     scatter_data = {SCATTER_LABEL: [],
@@ -518,6 +534,11 @@ if __name__ == '__main__':
 
                 if measure_type == X_HEIGHT:
                     expected_mm = lograd_to_mm(lograd)
+
+                    if args.compare_to_n:
+                        # Estimate the rounded N size for this logRAD based on the font style.
+                        expected_mm = n_to_mm(lograd_to_n(lograd)) * (0.450 if SERIF_CHART[chart_id] else 0.523)
+
                     err = (mean_mm / expected_mm) - 1
                     err_min = ((mean_mm - MEASUREMENT_ERROR) / expected_mm) - 1
                     err_max = ((mean_mm + MEASUREMENT_ERROR) / expected_mm) - 1
@@ -559,13 +580,20 @@ if __name__ == '__main__':
 
     # Generate the plot
     plt.rcParams.update({'font.size': 14})
-    markers = ("o", "x", "s")
+    markers = ("o", "x", "s", "+")
     assert(ceil(len(set(scatter_data[SCATTER_LABEL])) / 10) <= len(markers))
+
+    all_chart_ids = {}
+    for label in set(scatter_data[SCATTER_LABEL]):
+        all_chart_ids[float(label.split(" :: ")[0])] = label
 
     # Calculate the largest difference for each size.
     lograd_diff = {}
 
-    for label_num, label in enumerate(sorted(set(scatter_data[SCATTER_LABEL]))):
+    serif_count = 0
+    sans_serif_count = 0
+    for chart_id in sorted(all_chart_ids.keys()):
+        label = all_chart_ids[chart_id]
         plot_data = [[], [], []]
 
         for i in range(len(scatter_data[SCATTER_X])):
@@ -580,16 +608,44 @@ if __name__ == '__main__':
                 lograd_diff[scatter_data[SCATTER_X][i]].append(
                     scatter_data[SCATTER_Y][i])
 
-        marker = markers[int(label_num / 10)]
+        # Use different markers for serif, sans-serif and new.
+        marker = markers[0]
+        marker_colour = "C" + str(int(chart_id) % 10)
+        if chart_id in NEW_CHARTS:
+            marker = markers[2]
+        elif SERIF_CHART[chart_id]:
+            marker_colour = "C" + str(serif_count % 10)
+            serif_count += 1
+            marker = markers[1 if serif_count <= 10 else 3]
+        else:
+            marker_colour = "C" + str(sans_serif_count % 10)
+            sans_serif_count += 1
+            marker = markers[0 if sans_serif_count <= 10 else 2]
+
         plt.errorbar(plot_data[0], plot_data[1], yerr=plot_data[2],
-                    fmt=marker, label="Chart " + label.split(" :: ")[0],
+                    fmt=marker, color=marker_colour, label="Chart " +\
+                        str(int(chart_id) if chart_id % 1.0 == 0 else chart_id),
                     markersize=15)
 
+    # Range data for each logRAD size.
     for lograd, data in lograd_diff.items():
         print(lograd,
               "min:", min(data),
               "max:", max(data),
               "diff:", max(data) - min(data))
+
+    # Overall descriptive stats.
+    all_sizes = [i for sublist in lograd_diff.values() for i in sublist]
+    print("Overall stats:")
+    print("\tmean:", mean(all_sizes))
+    print("\tsd:", np.std(all_sizes))
+    print("\tmedian:", median(all_sizes))
+    print("\tiqr:", iqr(all_sizes))
+    print("\tmin:", min(all_sizes))
+    print("\tmax:", max(all_sizes))
+
+    # Uncomment to show raw data.
+    # print(*all_sizes, sep=",")
 
     plt.xlim(min(scatter_data[SCATTER_X]) - 0.1, max(scatter_data[SCATTER_X]) + 0.1)
     plt.xticks(np.arange(plt.axis()[0], plt.axis()[1], 0.1))
