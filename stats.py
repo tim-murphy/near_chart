@@ -16,6 +16,8 @@ from scipy.stats import iqr, linregress
 from statistics import mean, median
 import sys
 
+pg.options['round.column.CI95%'] = None
+
 X_HEIGHT="x-height"
 CAP_HEIGHT="cap height"
 UNIT_LABELS="labels"
@@ -180,6 +182,12 @@ def size_to_lograd(unit, size, mm, round_to=0.02):
     # Round to the nearest value.
     return round(lograd / round_to, 0) * round_to
 
+# For adding jitter to the scatter plots.
+# Adapted from: https://stackoverflow.com/a/21276920
+def rand_jitter(arr):
+    stdev = 0.01 * (max(arr) - min(arr))
+    return arr + np.random.randn(len(arr)) * stdev
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--measurements_dir", type=str, default="measurements",
@@ -205,6 +213,8 @@ if __name__ == '__main__':
                              + " as a fraction. (default: 0.2)")
     parser.add_argument("--compare_to_n", action="store_true", required=False,
                         help="If set, will compare measurements to N sizes.")
+    parser.add_argument("--icc_outfile_csv", required=False, type=str,
+                        help="If set, will write ICC data to this file.")
     args = parser.parse_args()
 
     # Check command-line arguments.
@@ -264,7 +274,8 @@ if __name__ == '__main__':
                 chart_id = float(chart.split(" :: ")[0])
                 unit = row["Unit"]
                 size = float(row["Size"])
-                measure_type = X_HEIGHT if row["Letter"].islower() \
+                letter=row["Letter"]
+                measure_type = X_HEIGHT if letter.islower() \
                                         else CAP_HEIGHT
                 measure = int(row["Height (px)"])
 
@@ -300,7 +311,9 @@ if __name__ == '__main__':
 
                 if not lograd in icc_data[csvfile][chart_id]:
                     icc_data[csvfile][chart_id][lograd] = []
-                icc_data[csvfile][chart_id][lograd].append(measure)
+
+                if letter.islower():
+                    icc_data[csvfile][chart_id][lograd].append(measure)
 
                 if not chart in height_px:
                     height_px[chart] = {}
@@ -356,7 +369,10 @@ if __name__ == '__main__':
 
         for g in sorted(icc_data.keys()):
             for s in all_sizes:
-                icc_data_matrix[g].append(mean(icc_data[g][chart_id][s]))
+                mean_vals = None
+                if len(icc_data[g][chart_id][s]) > 0:
+                    mean_vals = mean(icc_data[g][chart_id][s])
+                icc_data_matrix[g].append(mean_vals)
 
     if not icc_data_good:
         sys.exit()
@@ -368,11 +384,51 @@ if __name__ == '__main__':
     icc_df['index'] = icc_df.index
     icc_df = pd.melt(icc_df, id_vars=['index'], value_vars=list(icc_df)[:-1])
 
-    icc = pg.intraclass_corr(icc_df, 'index', 'variable', 'value')
+    icc = pg.intraclass_corr(icc_df, 'index', 'variable', 'value', nan_policy="omit")
     icc = icc.set_index("Type")
     print()
     print("=== ICC2 ===")
     print(icc.loc["ICC2"])
+
+    # Generate SD error rates from the ICC data, to be used in error bars.
+    sd_errors = {} # format: sd_errors[chart][size] = float
+    for chart_id, text_sizes in list(icc_data.values())[0].items():
+        if not chart_id in sd_errors:
+            sd_errors[chart_id] = {}
+        for text_size, text_heights in text_sizes.items():
+            sd = []
+            for grader in icc_data.keys():
+                if len(icc_data[grader][chart_id][text_size]) > 0:
+                    sd.append(np.std(icc_data[grader][chart_id][text_size]))
+
+            sd_errors[chart_id][text_size] = (0 if len(sd) == 0 else float(mean(sd)))
+
+    if args.icc_outfile_csv is not None:
+        print()
+        print("Writing ICC data to ", args.icc_outfile_csv, "...", end="", sep="")
+        with open(args.icc_outfile_csv, 'w') as ofile:
+            # Generate a list of chart / size headings.
+            print("", end="", flush=False, file=ofile)
+            for (chart_id, chart_sizes) in icc_data[grader_one].items():
+                for chart_size in reversed(chart_sizes.keys()):
+                    print(",Chart", chart_id, "logRAD", chart_size,
+                          end="", flush=False, file=ofile)
+            print("", file=ofile)
+
+            for (fname, icc_array) in icc_data_matrix.items():
+                grader = os.path.splitext(
+                    os.path.basename(fname))[0].capitalize()
+                print(grader, *icc_array, sep=",", file=ofile)
+
+            print("Mean grader SD", end="", file=ofile)
+            for (chart_id, chart_sizes) in icc_data[grader_one].items():
+                for chart_size in reversed(chart_sizes.keys()):
+                    print(",", sd_errors[chart_id][chart_size],
+                          end="", flush=False, file=ofile)
+            print(file=ofile)              
+
+        print("done")
+
     print()
 
     # Find instances where there is disagreement by more than 2px.
@@ -391,6 +447,9 @@ if __name__ == '__main__':
 
     if bad_data:
         sys.exit(1)
+
+    all_line_spacings = []
+    all_line_height_x_height_ratios = []
 
     # Extract the cap height / x-height ratio from the largest available font
     # size. Also deduce the line spacing.
@@ -429,6 +488,7 @@ if __name__ == '__main__':
 
         # Line spacing.
         line_spacings = []
+        line_height_x_height_ratios = []
         for lr in reversed(sorted(data0.keys())):
             px_values = {"x": data0[lr][BOTTOM_X_VALUE],
                          "y": data0[lr][BOTTOM_Y_VALUE]}
@@ -453,15 +513,19 @@ if __name__ == '__main__':
                     second_line_chars[0].append(val["x"])
                     second_line_chars[1].append(val["y"])
 
-            if len(second_line_chars[0]) > 0:
+            if len(second_line_chars[0]) > 0 and len(first_line_chars) > 0:
                 # Because the page will have some amount of tilt, we linearly
                 # regress the values and compare the y-intercepts.
                 # This doesn't work if there aren't enough datapoints.
                 line_spacing = None
+                line_x_ratio = None
                 if len(set(first_line_chars[0])) <= 3 or\
-                   len(set(second_line_chars[0])) <= 3 or True: # FIXME
+                   len(set(second_line_chars[0])) <= 3 or\
+                   True: # Using True to always run this as the linear regression does not give sane results
                     line_spacing = (mean(second_line_chars[1])\
                         - mean(first_line_chars[1])) / full_height
+                    line_x_ratio = (mean(second_line_chars[1])\
+                        - mean(first_line_chars[1])) / x_height
                 else:
                     first_line_reg = linregress(*first_line_chars)
                     second_line_reg = linregress(*second_line_chars)
@@ -481,12 +545,25 @@ if __name__ == '__main__':
                     line_spacing = (second_line_y - first_line_y) / full_height
 
                 line_spacings.append(line_spacing)
+                line_height_x_height_ratios.append(line_x_ratio)
 
-        print("Line spacing for chart", chart_id,
+        print("Line spacing (baseline-to-baseline:x-height) for chart", chart_id,
               "min=", round(min(line_spacings), 2),
+                "(" + str(round(min(line_height_x_height_ratios), 2)) + ")",
               "max=", round(max(line_spacings), 2),
+                "(" + str(round(max(line_height_x_height_ratios), 2)) + ")",
               "median=", round(median(line_spacings), 2),
-              "iqr=", round(iqr(line_spacings), 2))
+                "(" + str(round(median(line_height_x_height_ratios), 2)) + ")",
+              "iqr=", round(iqr(line_spacings), 2),
+                "(" + str(round(iqr(line_height_x_height_ratios), 2)) + ")")
+        
+        all_line_spacings.append(median(line_spacings))
+        all_line_height_x_height_ratios.append(median(line_height_x_height_ratios))
+
+    for label, vals in (("Line spacing", all_line_spacings),
+                        ("baseline-to-baseline:x-height ratios", all_line_height_x_height_ratios)):
+        print(label, "min=", min(vals), " max=", max(vals), " median=", median(vals),
+              " iqr=", iqr(vals))
 
     # These data will be used for the scatterplot.
     scatter_data = {SCATTER_LABEL: [],
@@ -517,6 +594,8 @@ if __name__ == '__main__':
         for lograd, measure_types in sizes.items():
             print("logRAD", round(lograd, 2))
 
+            measurement_error = MEASUREMENT_ERROR * (1 + sd_errors[chart_id][lograd])
+
             means = {}
             for measure_type, heights in measure_types.items():
                 if measure_type == UNIT_LABELS:
@@ -528,8 +607,8 @@ if __name__ == '__main__':
                 means[measure_type] = mean_mm
                 if measure_type not in (BOTTOM_X_VALUE, BOTTOM_Y_VALUE):
                     print("  ", measure_type, " mean: ", round(mean_mm, 3),
-                        "mm (", round(mean_mm - MEASUREMENT_ERROR, 3), "-",
-                        round(mean_mm + MEASUREMENT_ERROR, 3), ")",
+                        "mm (", round(mean_mm - measurement_error, 3), "-",
+                        round(mean_mm + measurement_error, 3), ")",
                         sep="")
 
                 if measure_type == X_HEIGHT:
@@ -540,8 +619,8 @@ if __name__ == '__main__':
                         expected_mm = n_to_mm(lograd_to_n(lograd)) * (0.450 if SERIF_CHART[chart_id] else 0.523)
 
                     err = (mean_mm / expected_mm) - 1
-                    err_min = ((mean_mm - MEASUREMENT_ERROR) / expected_mm) - 1
-                    err_max = ((mean_mm + MEASUREMENT_ERROR) / expected_mm) - 1
+                    err_min = ((mean_mm - measurement_error) / expected_mm) - 1
+                    err_max = ((mean_mm + measurement_error) / expected_mm) - 1
                     tolerance = 0.05 if lograd > -0.2 else 0.1
 
                     marker = ""
@@ -556,7 +635,7 @@ if __name__ == '__main__':
                     scatter_data[SCATTER_LABEL].append(chart)
                     scatter_data[SCATTER_X].append(lograd)
                     scatter_data[SCATTER_Y].append(err * 100)
-                    scatter_data[ERROR].append(MEASUREMENT_ERROR / expected_mm * 100)
+                    scatter_data[ERROR].append(measurement_error / expected_mm * 100)
 
             if X_HEIGHT in means and CAP_HEIGHT in means:
                 print(" ", X_HEIGHT, CAP_HEIGHT, "ratio:",
@@ -598,7 +677,7 @@ if __name__ == '__main__':
 
         for i in range(len(scatter_data[SCATTER_X])):
             if scatter_data[SCATTER_LABEL][i] == label:
-                plot_data[0].append(scatter_data[SCATTER_X][i])
+                plot_data[0].append(rand_jitter(scatter_data[SCATTER_X])[i])
                 plot_data[1].append(scatter_data[SCATTER_Y][i])
                 plot_data[2].append(scatter_data[ERROR][i])
 
@@ -661,5 +740,8 @@ if __name__ == '__main__':
     plt.fill_between(np.linspace(plt.axis()[0], -0.15, 2),
                      -10, +10, color="blue", alpha=0.2, label="Tolerance", linewidth=0)
     plt.show()
+
+    print()
+    print("All done! Have a nice day :)")
 
 # EOF
