@@ -281,7 +281,7 @@ Chart,Unit,Size,Letter,X,Y,X,Y,Height (px),Comments
 8.2 :: Hank Children,N size,5,F,2003,5910,1987,5944,34,
 8.2 :: Hank Children,N size,5,H,1965,6010,1963,6045,35,
 8.2 :: Hank Children,N size,5,w,2029,5969,2035,5994,25,
-8.2 :: Hank Children,N size,5,w,1372,6023,1367,6049,26,Please check this letter as the bottom coordinate seems to be wrong.
+8.2 :: Hank Children,N size,5,w,1372,6023,1367,6049,26,
 8.2 :: Hank Children,N size,5,z,1032,5925,1030,5950,25,
 8.2 :: Hank Children,N size,4,I,221,6419,221,6447,28,
 8.2 :: Hank Children,N size,4,A,1620,6453,1611,6481,28,
@@ -466,7 +466,7 @@ Chart,Unit,Size,Letter,X,Y,X,Y,Height (px),Comments
 14 :: Evans Instruments,N size,12,v,5078,3687,5093,3738,51,
 14 :: Evans Instruments,N size,12,v,4067,3699,4082,3750,51,
 14 :: Evans Instruments,N size,10,N,4882,3099,4884,3156,57,
-14 :: Evans Instruments,N size,10,x,5622,3109,5617,3142,33,
+14 :: Evans Instruments,N size,10,x,5622,3109,5617,3149,40,
 14 :: Evans Instruments,N size,10,z,5346,3112,5357,3151,39,
 14 :: Evans Instruments,N size,10,v,5011,3115,4998,3155,40,
 14 :: Evans Instruments,N size,8,T,3202,3072,3204,3122,50,
