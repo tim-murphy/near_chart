@@ -1,10 +1,10 @@
 # Reading chart study
 
-This repository contains code used for chart measurement and statistics for the study (unpublished):
+This repository contains code used for chart measurement and statistics for the study:
 
-Murphy, TI, Chen, J, Leung, M, **How accurate are our near reading charts? An assessment of 19 charts against ISO standards.** (2026).
+Murphy, T.I., Chen, J. & Leung, M. How Accurate are Our Near Reading Charts? An Assessment of 19 Charts Against ISO Standards. Ophthalmic Physiol. Opt. (2026). https://doi.org/10.1007/s44402-026-00123-2
 
-This study compared reading charts commonly used in community optometry to the new ISO 7921:2024 standard. A new, standards-compliant chart was created as part of this study, which is available under the Releases tab to the right.
+This study compared reading charts commonly used in community optometry to the new ISO 7921:2024 standard. A new, standards-compliant chart was created as part of this study, which is available under the Releases tab to the right. Please cite the above paper if you use the chart for research purposes.
 
 ## Environment setup
 
